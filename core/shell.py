@@ -13,10 +13,12 @@ class MarkusShell(cmd.Cmd):
         self.agent = agent
 
     def do_run(self, arg):
+        """Commande pour envoyer du texte à Markus"""
         response = self.agent.run(arg)
         print("Markus:", response)
 
     def do_exit(self, arg):
+        """Commande pour quitter le shell Markus"""
         print("Au revoir !")
         return True
 
