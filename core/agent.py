@@ -1,8 +1,16 @@
 import json
+import logging
 from typing import Any, Dict
 from pydantic import BaseModel
 from core.utils.tools import get_markus_tools, tools_registry
 from core.providers import Provider
+
+logging.basicConfig(
+    filename="markus.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 class MarkusResponse(BaseModel):
 
@@ -18,17 +26,6 @@ def call_tool(tool_name: str, tool_args: Dict[str, Any]) -> Any:
     if not tool_func:
         raise ValueError(f"Outil '{tool_name}' non trouvé.")
     return tool_func(**tool_args)
-
-import re
-import json
-
-def parse_llm_json(response_text: str):
-    cleaned = re.sub(r"^```json\s*|\s*```$", "", response_text.strip(), flags=re.MULTILINE)
-    json_match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
-    if json_match:
-        return json.loads(json_match.group())
-    else:
-        return {"action": "text", "response_text": response_text}
 
 class MarkusAgent:
     def __init__(self, provider: Provider):
@@ -49,18 +46,28 @@ class MarkusAgent:
         }}
 
         Ne renvoie **jamais** autre chose que ce JSON.
+        
+        La requête de l'utilisateur peut ne pas être satisfaite en un seul appel, tu es encouragé à diviser
+        ta tâche en étape, selon les outils et leurs arguments, si tu n'es pas capable de satisfaire la
+        demande, il faut le dire à l'utilisateur.
         """
 
     def generate(self, prompt: str) -> MarkusResponse:
         try:
-            raw_response = self.provider.generate_response_from_text(
+            response = self.provider.generate_response_from_text(
                 text=self.system_prompt + "\nUser: " + prompt
             )
-            data = parse_llm_json(raw_response)
-            return MarkusResponse(**data)
-        except json.JSONDecodeError:
-            return MarkusResponse(action="text", response_text=raw_response)
+
+            if response is None:
+                raise ValueError("Le provider a retourné None.")
+            if not isinstance(response, dict):
+                raise ValueError(f"Provider returned non-mapping response: {type(response).__name__}")
+            if "action" not in response:
+                raise ValueError("Provider response missing 'action' field.")
+
+            return MarkusResponse(**response)
         except Exception as e:
+            logging.exception("Erreur lors de la génération de la réponse du provider")
             return MarkusResponse(action="error", error_message=str(e))
 
     def run(self, user_text: str) -> str:
@@ -68,6 +75,12 @@ class MarkusAgent:
         while True:
             prompt = f"{user_text}\nContexte précédent: {context}"
             response = self.generate(prompt)
+
+            logging.info(json.dumps({
+                "user_input": user_text,
+                "agent_response": response.model_dump() or {},
+                "context": context
+            }, ensure_ascii=False))
 
             if response.action == "text":
                 return response.response_text
@@ -82,4 +95,3 @@ class MarkusAgent:
 
             elif response.action == "error":
                 return f"Erreur rencontrée par Markus: {response.error_message}"
-
