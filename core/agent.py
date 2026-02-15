@@ -18,6 +18,8 @@ class MarkusResponse(BaseModel):
     tool_name: str | None = None
     tool_args: Dict[str, Any] | None = None
     response_text: str | None = None
+    current_step: str | None = None
+    next_step: str | None = None
     error_message: str | None = None
 
 
@@ -41,15 +43,18 @@ class MarkusAgent:
             "action": "tool_call" | "text" | "error",
             "tool_name": "nom_de_l_outil" | null,
             "tool_args": {{ "arg1": valeur1, ... }} | null,
-            "response_text": "texte si action=text" | null,
+            "response_text" : "reponse finale, à remplir uniquement quand la demande de l'utilisateur aura été satisfaite ou si une erreur est survenue" | null,
+            "current_step": "description de ce que tu fais (ex: d'abord appeler la fonction do_something())",
+            "next_step" : "description ce que tu vas faire après avoir eu le résultat (ex: ensuite je vais appeler la fonction then()" | null,
             "error_message": "message si action=error" | null
         }}
 
-        Ne renvoie **jamais** autre chose que ce JSON.
+        Ne renvoie **jamais** autre chose que ce JSON et ne mets pas de backtricks comme ceci à la réponse: "```json", nous avons \n
+        juste besoin du JSON.
         
         La requête de l'utilisateur peut ne pas être satisfaite en un seul appel, tu es encouragé à diviser
         ta tâche en étape, selon les outils et leurs arguments, si tu n'es pas capable de satisfaire la
-        demande, il faut le dire à l'utilisateur.
+        demande, il faut le dire à l'utilisateur. Utilise les contextes précédents pour te situer, s'ils existent 
         """
 
     def generate(self, prompt: str) -> MarkusResponse:
@@ -72,20 +77,39 @@ class MarkusAgent:
 
     def run(self, user_text: str) -> str:
         context = ""
+        max_iterations = 12
+        attempts = 0
+        current_step: str | None = None
         while True:
+            attempts += 1
+            if attempts > max_iterations:
+                return (
+                    "Markus a atteint le nombre maximal d'itérations sans produire de réponse finale. "
+                    "Il semble qu'il y ait une boucle. Interrompu pour éviter une boucle infinie."
+                )
+
             prompt = f"{user_text}\nContexte précédent: {context}"
             response = self.generate(prompt)
 
-            logging.info(json.dumps({
-                "user_input": user_text,
-                "agent_response": response.model_dump() or {},
-                "context": context
-            }, ensure_ascii=False))
-
-            if response.action == "text":
+            if response.action == "text" and response.response_text:
+                logging.info(json.dumps({
+                    "user_input": user_text,
+                    "agent_response": response.response_text
+                }, ensure_ascii=False))
                 return response.response_text
 
             elif response.action == "tool_call":
+                if response.current_step:
+                    current_step = response.current_step
+                    context += f"\nEtape actuelle: {current_step}"
+                if response.next_step:
+                    next_step = response.next_step
+                    context += f"\nProchaine étape: {next_step}"
+
+                if not response.tool_name:
+                    context += "\nRéponse de provider: appel d'outil sans nom d'outil."
+                    return "Erreur: appel d'outil sans nom fourni par le provider."
+
                 try:
                     tool_result = call_tool(response.tool_name, response.tool_args or {})
                     context += f"\nRésultat de {response.tool_name}: {tool_result}"
