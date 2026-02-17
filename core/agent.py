@@ -4,6 +4,7 @@ from typing import Any, Dict
 from pydantic import BaseModel
 from core.utils.tools import get_markus_tools, tools_registry
 from core.providers import Provider
+from core.utils.validator import get_validation_from_console_input
 
 logging.basicConfig(
     filename="markus.log",
@@ -27,6 +28,12 @@ def call_tool(tool_name: str, tool_args: Dict[str, Any]) -> Any:
     tool_func = tools_registry.get(tool_name)
     if not tool_func:
         raise ValueError(f"Outil '{tool_name}' non trouvé.")
+    if getattr(tool_func, "_needs_validation", False):
+        validation: bool = get_validation_from_console_input(tool_name, tool_args)
+        if not validation:
+            return ("L'utilisateur ne vous a pas autorisé à executer cet outil\n"
+                    "Renvoyer un texte lui demandant poliment plus d'informations ce\n"
+                    "qu'il recherche vu qu'il a empêché l'execution de l'outil")
     return tool_func(**tool_args)
 
 class MarkusAgent:
@@ -90,6 +97,8 @@ class MarkusAgent:
 
             prompt = f"{user_text}\nContexte précédent: {context}"
             response = self.generate(prompt)
+            print(f"(Markus thinking...):  {response.current_step}")
+            print(f"(Markus action...): {response.action}")
 
             if response.action == "text" and response.response_text:
                 logging.info(json.dumps({
