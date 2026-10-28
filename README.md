@@ -124,4 +124,4 @@ Couverture des objectifs
 - Local provider: Done
 - Suivi d'étapes: Done
 
-Fin du journal — JOUR 2
+Fin du journal
